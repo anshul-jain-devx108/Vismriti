@@ -33,7 +33,6 @@ Endpoints:
 
 | Service | URL |
 |---|---|
-| DataHub UI | <https://datahub-frontend.happyhill-72aa3202.centralindia.azurecontainerapps.io> |
 | GMS API | <https://datahub-gms.happyhill-72aa3202.centralindia.azurecontainerapps.io> |
 
 Version, from `GET /config`:
