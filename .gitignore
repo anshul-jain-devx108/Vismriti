@@ -30,6 +30,9 @@ runs/
 audit_trails/
 plans/
 
+# Packaged copy of this repo, built for hand-off. Not part of the source tree.
+vismriti-submission.zip
+
 # Local-only planning / design docs (kept out of the public repo).
 # The repository is the executable artifact; these notes were internal
 # working documents during the hackathon and are not for distribution.

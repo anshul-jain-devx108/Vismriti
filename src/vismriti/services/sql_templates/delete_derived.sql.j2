@@ -1,6 +1,6 @@
 -- Delete subject rows from derived table.
 DELETE FROM {{ table }}
-WHERE {{ id_column }} = {{ subject_id }}
-{%- if subject_hash %}
-   OR {{ id_column }}_hash = '{{ subject_hash }}'
-{%- endif %};
+WHERE {{ predicates[0] }}
+{%- for predicate in predicates[1:] %}
+   OR {{ predicate }}
+{%- endfor %};

@@ -1,13 +1,11 @@
 """Vismriti AgentOS runtime launcher.
 
-One-command entrypoint that starts the FastAPI service (built on Agno's
-AgentOS) with host/port/reload driven from `.env`. Equivalent to running:
-
-    uvicorn vismriti.main:app --host $AGENTOS_HOST --port $AGENTOS_PORT
+Starts the FastAPI service with host, port and log level taken from `.env`.
+Equivalent to: uvicorn vismriti.main:app --host $AGENTOS_HOST --port $AGENTOS_PORT
 
 Usage:
-    python run.py                  # dev, reload on
-    python run.py --no-reload      # prod-style: no auto-reload
+    python run.py                     # dev, reload on
+    python run.py --no-reload         # no auto-reload
     AGENTOS_PORT=9000 python run.py   # override port via env
 """
 
@@ -18,6 +16,13 @@ import argparse
 import uvicorn
 
 from vismriti.utils.config import settings
+
+LOG_LEVELS = ("critical", "error", "warning", "info", "debug", "trace")
+
+
+def _default_log_level() -> str:
+    level = settings.log_level.strip().lower()
+    return level if level in LOG_LEVELS else "info"
 
 
 def main() -> None:
@@ -43,8 +48,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--log-level",
-        default=settings.log_level.lower(),
-        help=f"Log level (default: {settings.log_level.lower()}, from LOG_LEVEL)",
+        default=_default_log_level(),
+        choices=LOG_LEVELS,
+        help=f"Log level (default: {_default_log_level()}, from LOG_LEVEL)",
     )
     args = parser.parse_args()
 

@@ -1,18 +1,16 @@
-"""Vismriti services — the business logic that makes the erasure workflow work.
+"""Vismriti services: the erasure workflow.
 
-Composition (used by both `vismriti.agent` tools and direct callers):
+Pipeline order:
 
-    resolve_subject  →  find_pii_columns  →  collect_downstream  →
-    build_plan       →  Executor.execute  →  write_back           →
-    render_markdown / write_reports
+    resolve_subject -> find_pii_columns -> collect_downstream ->
+    build_plan -> Executor.execute -> write_back -> render_markdown
 
-The top-level `ErasureOrchestrator` in `orchestrator.py` sequences all of these
-into `plan()` / `execute_plan()` / `run()` for callers that want the whole
-pipeline in one call.
+`ErasureOrchestrator` in `orchestrator.py` sequences all of it behind
+`plan()`, `execute_plan()` and `run()`.
 
 Bundled resources:
-    - sql_templates/ : Jinja2 SQL templates for the deterministic planner
-    - fixtures/      : offline demo data consumed by DataHubClient
+    - sql_templates/ : Jinja2 SQL templates used by the planner
+    - fixtures/      : offline data consumed by DataHubClient in fixture mode
 """
 
 from .executor import Executor
@@ -27,10 +25,10 @@ __all__ = [
     "ErasureOrchestrator",
     "Executor",
     "build_plan",
-    "plan_action",
     "collect_downstream",
+    "plan_action",
+    "render_markdown",
     "resolve_subject",
     "write_back",
-    "render_markdown",
     "write_reports",
 ]

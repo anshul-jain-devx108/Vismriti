@@ -1,28 +1,19 @@
-"""Agno tool wrappers around Vismriti's core ErasureOrchestrator.
+"""Agno tool wrappers around the ErasureOrchestrator.
 
-These functions are what the LLM in the Agno Agent can call. Each one is a
-thin wrapper around a method on the existing (fully-tested) `ErasureOrchestrator`
-class — the deterministic planner and write-back logic stay untouched.
-
-Design decisions (from PRODUCT_EXPLAINER §9 + design review):
-
-    1. LLM never writes DELETE/UPDATE SQL. All destructive SQL comes from
-       `planner.py` Jinja templates.
-    2. LLM cannot bypass approval. Destructive tools carry Agno's native
-       `@tool(requires_confirmation=True)` flag — the framework halts the
-       run and exposes an approval decision via `/approvals` REST + Slack
-       Block Kit + AgentOS Control Plane. No boolean-flag override.
-    3. Actions are approvable individually, not all-or-nothing. Priya can
-       approve action #1 and reject action #5 in the same plan.
-    4. The write-back to DataHub is a separate tool. Runs only after the
-       user has finalised approvals — so the audit-trail entity always
-       reflects reality.
+Four tools are exposed to the LLM: two read-only (plan_erasure,
+list_pii_columns) and two destructive (execute_erasure_action,
+finalize_erasure) that carry requires_confirmation=True so Agno halts the run
+until a human confirms. The LLM never supplies SQL; destructive statements are
+looked up from the stored plan by (request_id, asset_urn).
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
+import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from agno.tools import tool
@@ -30,6 +21,7 @@ from agno.tools import tool
 from ..core.datahub_client import DataHubClient
 from ..core.models import ErasurePlan
 from ..services.orchestrator import ErasureOrchestrator
+from ..utils.config import settings
 
 
 def _request_id(email: str) -> str:
@@ -39,10 +31,10 @@ def _request_id(email: str) -> str:
 
 
 def _run_async(coro):
-    """Bridge async ErasureOrchestrator methods into Agno's sync tool interface.
+    """Bridge async orchestrator methods into Agno's sync tool interface.
 
     Agno tools may run inside an already-running loop (AgentOS FastAPI); when
-    that's the case, spin up a fresh loop in a thread to avoid nesting.
+    that is the case, run the coroutine on a fresh loop in a worker thread.
     """
     try:
         asyncio.get_running_loop()
@@ -55,24 +47,62 @@ def _run_async(coro):
         return pool.submit(asyncio.run, coro).result()
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Plan cache — bridges the multi-turn HITL flow
-# ══════════════════════════════════════════════════════════════════════
-# Between `plan_erasure` (turn N) and `execute_erasure_action` (turn N+K,
-# after user approvals), the agent needs to look up the actual PlannedAction
-# object by URN — not trust the LLM to re-emit the SQL. This in-memory
-# dict is scoped per-process; AgentOS's session store handles cross-process
-# persistence via its own approval state machine.
+# Plan store. Approvals in a DPO workflow span hours and AgentOS may run
+# several uvicorn workers, so plans are persisted as JSON under
+# <output_dir>/plans/<request_id>.json. The dict below is only a read cache,
+# keyed by file mtime so a plan written by another worker is picked up.
 
-_PLAN_CACHE: dict[str, ErasurePlan] = {}
+_PLAN_CACHE: dict[str, tuple[float, ErasurePlan]] = {}
+
+_SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
-def _cache_plan(request_id: str, plan: ErasurePlan) -> None:
-    _PLAN_CACHE[request_id] = plan
+def _plan_path(request_id: str) -> Path | None:
+    """Path for a request id, or None if the id is not a safe file name."""
+    if not request_id or not _SAFE_REQUEST_ID.match(request_id):
+        return None
+    return Path(settings.output_dir) / "plans" / f"{request_id}.json"
+
+
+def _save_plan(plan: ErasurePlan) -> None:
+    """Persist a plan atomically and refresh the read cache."""
+    path = _plan_path(plan.request_id)
+    if path is None:
+        raise ValueError(f"Unsafe request_id for a plan file: {plan.request_id!r}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+    _PLAN_CACHE[plan.request_id] = (path.stat().st_mtime, plan)
+
+
+def _load_plan(request_id: str) -> ErasurePlan | None:
+    """Return the stored plan, or None if it is missing or unreadable."""
+    path = _plan_path(request_id)
+    if path is None:
+        return None
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        _PLAN_CACHE.pop(request_id, None)
+        return None
+
+    cached = _PLAN_CACHE.get(request_id)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+
+    try:
+        plan = ErasurePlan.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+    _PLAN_CACHE[request_id] = (mtime, plan)
+    return plan
 
 
 def _find_action(request_id: str, asset_urn: str):
-    plan = _PLAN_CACHE.get(request_id)
+    """Return (plan, action) for an asset in a stored plan, or None."""
+    plan = _load_plan(request_id)
     if plan is None:
         return None
     for action in plan.actions:
@@ -84,33 +114,29 @@ def _find_action(request_id: str, asset_urn: str):
     return None
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Tool: plan_erasure  (read-only, no HITL)
-# ══════════════════════════════════════════════════════════════════════
-
 @tool
 def plan_erasure(
     subject_email: str,
     use_fixtures: bool = True,
     fixture_subject_id: int = 48291,
 ) -> dict[str, Any]:
-    """Build an erasure plan for a subject. Read-only — no SQL executes.
+    """Build an erasure plan for a subject. Read-only, no SQL executes.
 
     Given a subject's email, this tool:
-        1. Queries DataHub for PII-tagged columns
+        1. Finds the PII-tagged columns DataHub reports
         2. Resolves the subject's internal id and email hash
         3. Walks forward lineage from every source dataset
         4. Emits per-asset actions (anonymize / delete / dbt_rerun / etc.)
         5. Separates residual-risk assets (no owner, no PII tag, downstream)
 
-    The plan is cached server-side under its `request_id`. To execute any
-    action, pass `request_id` + `asset_urn` to `execute_erasure_action`
-    (which requires human confirmation).
+    The plan is stored on disk under its `request_id`. To execute any action,
+    pass `request_id` + `asset_urn` to `execute_erasure_action` (which requires
+    human confirmation).
 
     Args:
         subject_email: The email of the data subject requesting erasure.
-        use_fixtures: If True, uses offline fixture data (safe for demos and CI).
-            If False, connects to a live DataHub MCP server.
+        use_fixtures: If True, uses offline fixture data. If False, queries the
+            configured live DataHub deployment.
         fixture_subject_id: Only used in fixture mode; the resolved patient_id.
 
     Returns:
@@ -122,12 +148,12 @@ def plan_erasure(
         client = DataHubClient(use_fixtures=use_fixtures)
         await client.connect()
         try:
-            agent = ErasureOrchestrator(client)
+            orchestrator = ErasureOrchestrator(client)
             rid = _request_id(subject_email)
-            plan = await agent.plan(
+            plan = await orchestrator.plan(
                 subject_email, rid, fixture_subject_id=fixture_subject_id
             )
-            _cache_plan(rid, plan)
+            _save_plan(plan)
             return plan.model_dump(mode="json")
         finally:
             await client.close()
@@ -135,41 +161,32 @@ def plan_erasure(
     return _run_async(_run())
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Tool: execute_erasure_action  (destructive — HITL REQUIRED)
-# ══════════════════════════════════════════════════════════════════════
-
-@tool
+@tool(requires_confirmation=True)
 def execute_erasure_action(
     request_id: str,
     asset_urn: str,
     dry_run: bool = True,
     use_fixtures: bool = True,
 ) -> dict[str, Any]:
-    """Execute ONE erasure action against the warehouse in DRY-RUN by default.
+    """Execute ONE erasure action against the warehouse, dry-run by default.
 
-    Safety: `dry_run` defaults to True, so no destructive SQL commits in the
-    demo path. Turn it off explicitly with dry_run=False when running
-    against a real warehouse (which requires human policy sign-off outside
-    this agent — Vismriti in a production deployment would gate this with
-    Slack Block Kit approval cards via the `/approvals` REST surface;
-    left as a follow-up because Slack HITL cards need extra plumbing).
+    Agno halts the run before this tool executes and waits for a human to
+    confirm the call and its arguments, including `dry_run`.
 
-    The SQL/command is NOT taken from the LLM — it is looked up from the
-    cached plan by (request_id, asset_urn). This means the LLM cannot
-    fabricate destructive statements; it can only trigger execution of
-    plan entries that `plan_erasure` deterministically emitted.
+    The SQL/command is not taken from the LLM; it is looked up from the stored
+    plan by (request_id, asset_urn). The LLM can only trigger execution of
+    entries that `plan_erasure` deterministically emitted.
 
     Args:
         request_id: The plan's request_id from `plan_erasure`.
         asset_urn: Which asset in the plan to erase (from actions[].asset.urn).
         dry_run: If True, generates but does not commit SQL. Default True.
-        use_fixtures: Offline fixture mode for the DataHub write-back call.
+        use_fixtures: Offline fixture mode for the DataHub calls.
 
     Returns:
-        Dict with executed action details + status. Residual-risk actions
-        return without executing (they need a human decision, not just a
-        confirmation click).
+        Dict with the executed action details + status. Residual-risk actions
+        return without executing; they need a human decision on
+        delete-vs-anonymize, not a confirmation click.
     """
 
     found = _find_action(request_id, asset_urn)
@@ -177,8 +194,8 @@ def execute_erasure_action(
         return {
             "status": "error",
             "reason": (
-                f"No plan cached for request_id={request_id} or asset_urn={asset_urn} "
-                "not in plan. Call plan_erasure first."
+                f"No stored plan for request_id={request_id}, or asset_urn={asset_urn} "
+                "is not in that plan. Call plan_erasure first."
             ),
         }
     plan, action = found
@@ -189,23 +206,31 @@ def execute_erasure_action(
             "reason": action.reason,
             "asset_urn": asset_urn,
             "recommendation": (
-                "Residual-risk assets need human decision on delete-vs-anonymize, "
-                "not just a confirmation click. Escalate outside the agent."
+                "Residual-risk assets need a human decision on delete-vs-anonymize. "
+                "Escalate outside the agent."
             ),
         }
 
-    # Mark approved (we only reach here after Agno's approval gate cleared)
-    action.approved = True
-
-    from ..utils.config import settings
     from ..services.executor import Executor
 
-    settings.dry_run = dry_run
-    executor = Executor()
-    executor.execute(action)
+    # Reached only after Agno's confirmation gate cleared.
+    action.approved = True
+
+    Executor(dry_run=dry_run).execute(action)
+
+    if action.execution_error:
+        status = "failed"
+    elif action.executed:
+        # An advisory action is only recorded here; the owning team performs it.
+        status = "recorded_advisory" if action.advisory else "executed"
+    else:
+        status = "not_executed"
+
+    # Persist the mutated action so finalize_erasure aggregates real state.
+    _save_plan(plan)
 
     return {
-        "status": "executed" if not action.execution_error else "failed",
+        "status": status,
         "asset_urn": asset_urn,
         "asset_name": action.asset.name,
         "action_type": action.action_type.value,
@@ -216,57 +241,51 @@ def execute_erasure_action(
     }
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Tool: finalize_erasure  (write-back — HITL REQUIRED, run last)
-# ══════════════════════════════════════════════════════════════════════
-
-@tool
+@tool(requires_confirmation=True)
 def finalize_erasure(
     request_id: str,
     use_fixtures: bool = True,
 ) -> dict[str, Any]:
     """Write the erasure audit trail back to DataHub.
 
-    After all per-action executions are complete, this tool:
-        1. Aggregates executed / failed / residual actions into an
-           ExecutionReport
-        2. Adds an `erasure_completed` annotation to every affected
-           DataHub entity
-        3. Creates a first-class `erasureRequest` entity that links to
-           every affected asset — the audit-trail root
-
-    In a production deployment this write-back would be preceded by a
-    human approval card; for the hackathon demo it executes directly so
-    the LLM flow completes end-to-end.
+    Agno halts the run before this tool executes and waits for human
+    confirmation. It then aggregates executed / failed / residual actions from
+    the stored plan into an ExecutionReport and attempts the DataHub write-back
+    (per-asset annotations plus one erasureRequest audit entity).
 
     Args:
         request_id: The plan's request_id.
         use_fixtures: Offline fixture mode for the DataHub write-back call.
 
     Returns:
-        ExecutionReport dict including the `writeback_urn` of the audit
-        entity.
+        The ExecutionReport fields plus a `status`. status="finalized" only if
+        DataHub accepted the write-back; otherwise status="writeback_failed"
+        with the reason, and `writeback_urn` stays null.
     """
 
-    plan = _PLAN_CACHE.get(request_id)
+    plan = _load_plan(request_id)
     if plan is None:
-        return {"status": "error", "reason": f"No plan cached for request_id={request_id}"}
+        return {"status": "error", "reason": f"No stored plan for request_id={request_id}"}
 
     async def _run():
         from ..core.models import ExecutionReport
         from ..services.writeback import write_back
 
-        started = plan.created_at
         report = ExecutionReport(
             request_id=plan.request_id,
             subject_email=plan.subject.input_email,
-            started_at=started,
+            started_at=plan.created_at,
+            fixture_mode=use_fixtures,
+            dry_run=any(a.dry_run for a in plan.actions if a.executed),
         )
         for action in plan.actions:
-            if action.executed and not action.execution_error:
-                report.executed.append(action)
-            elif action.execution_error:
+            if action.execution_error:
                 report.failed.append(action)
+            elif action.executed or action.advisory:
+                # Advisory actions are unexecuted by design. They belong in the
+                # executed bucket so write_back annotates them as advisory
+                # rather than as residual risk.
+                report.executed.append(action)
             else:
                 report.skipped_residual.append(action)
         for action in plan.residual_actions:
@@ -277,23 +296,27 @@ def finalize_erasure(
         await client.connect()
         try:
             await write_back(client, plan, report)
-            return report.model_dump(mode="json")
+        except Exception as exc:  # noqa: BLE001 - any client failure is reported, not raised
+            report.writeback_ok = False
+            report.writeback_error = f"{type(exc).__name__}: {exc}"
         finally:
             await client.close()
+
+        payload = report.model_dump(mode="json")
+        if report.writeback_ok:
+            return {"status": "finalized", **payload}
+        return {
+            "status": "writeback_failed",
+            "reason": report.writeback_error or "DataHub did not accept the write-back",
+            **payload,
+        }
 
     return _run_async(_run())
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Tool: list_pii_columns  (read-only, no HITL)
-# ══════════════════════════════════════════════════════════════════════
-
 @tool
 def list_pii_columns(use_fixtures: bool = True) -> dict[str, Any]:
-    """List every PII-tagged column DataHub knows about. Read-only.
-
-    Useful for the LLM to answer compliance questions or scope a plan
-    before running it.
+    """List every PII-tagged column DataHub reports. Read-only.
 
     Args:
         use_fixtures: Offline fixture mode.

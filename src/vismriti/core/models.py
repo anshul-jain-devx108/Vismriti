@@ -1,8 +1,7 @@
 """Domain models for the erasure agent.
 
-These are the shared shapes passed between lineage traversal, planning,
-execution, write-back, and reporting. Keep them plain — a plan is data,
-not behaviour.
+Shared shapes passed between lineage traversal, planning, execution,
+write-back, and reporting. A plan is data, not behaviour.
 """
 
 from __future__ import annotations
@@ -79,6 +78,21 @@ class PlannedAction(BaseModel):
     approved: bool = False
     executed: bool = False
     execution_error: str | None = None
+    dry_run: bool = Field(
+        default=False,
+        description=(
+            "The statement was rendered and checked but never sent to the "
+            "warehouse. `executed` records that the action reached the end of "
+            "its lifecycle, not that any row changed."
+        ),
+    )
+    advisory: bool = Field(
+        default=False,
+        description=(
+            "Vismriti only records this action (dbt re-run, dashboard cache "
+            "invalidation, ML retrain flag); the owning team performs it."
+        ),
+    )
 
 
 class ErasurePlan(BaseModel):
@@ -95,7 +109,7 @@ class ErasurePlan(BaseModel):
 
 
 class ExecutionReport(BaseModel):
-    """Result of running an approved plan."""
+    """Result of running an approved plan, including the DataHub write-back."""
 
     request_id: str
     subject_email: str
@@ -104,9 +118,54 @@ class ExecutionReport(BaseModel):
     executed: list[PlannedAction] = Field(default_factory=list)
     failed: list[PlannedAction] = Field(default_factory=list)
     skipped_residual: list[PlannedAction] = Field(default_factory=list)
+
+    # How this run was carried out. Both default to False so a report can
+    # never imply real work by omission; the runner stamps them.
+    dry_run: bool = Field(
+        default=False,
+        description="SQL was rendered but never sent to the warehouse.",
+    )
+    fixture_mode: bool = Field(
+        default=False,
+        description=(
+            "Metadata reads and DataHub write-backs were served from canned "
+            "fixture files, not from a DataHub deployment."
+        ),
+    )
+
+    # Write-back outcome. writeback_urn is set only when DataHub actually
+    # accepted the erasureRequest entity; it is never a placeholder.
     writeback_urn: str | None = None
+    writeback_ok: bool = False
+    writeback_error: str | None = None
+    annotations_succeeded: list[str] = Field(default_factory=list)
+    annotations_failed: list[str] = Field(default_factory=list)
+    annotation_errors: dict[str, str] = Field(
+        default_factory=dict,
+        description="URN -> reason, for every annotation DataHub did not accept.",
+    )
 
     def duration_seconds(self) -> float:
         if self.finished_at is None:
             return 0.0
         return (self.finished_at - self.started_at).total_seconds()
+
+    def is_simulated(self) -> bool:
+        """True when nothing in this run touched a real system."""
+        return self.dry_run or self.fixture_mode
+
+    def performed_actions(self) -> list[PlannedAction]:
+        """Erasure actions Vismriti ran itself.
+
+        In a dry run these were rendered and not sent; check `dry_run` before
+        reading them as rows that changed.
+        """
+        return [a for a in self.executed if not a.advisory]
+
+    def advisory_actions(self) -> list[PlannedAction]:
+        """Advisory actions, whichever bucket the runner put them in."""
+        return [a for a in (*self.executed, *self.failed) if a.advisory]
+
+    def failed_actions(self) -> list[PlannedAction]:
+        """Actions that were attempted and did not succeed."""
+        return [a for a in self.failed if not a.advisory]

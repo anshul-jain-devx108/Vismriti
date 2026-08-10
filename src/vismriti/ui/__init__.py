@@ -1,8 +1,4 @@
-"""Vismriti UI surfaces.
+"""Browser UIs for Vismriti.
 
-Currently contains the Streamlit review-and-approve UI (`app.py`).
-
-Both AgentOS-driven interfaces (Slack, REST) and the direct
-`ErasureOrchestrator` CLI (`vismriti.cli`) are separate surfaces —
-this package holds only browser/desktop UIs.
+    - app: the Streamlit review-and-approve UI
 """

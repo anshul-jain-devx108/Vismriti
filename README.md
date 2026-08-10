@@ -2,35 +2,41 @@
 
 **The agent that helps your data forget.**
 
-Vismriti is a Slack-native AI agent that automates GDPR Article 17 (right-to-erasure) requests. It reads DataHub through the MCP-style client to walk lineage from every PII-tagged source, generates a deterministic per-asset action plan (anonymize / delete / dbt-rerun / dashboard-invalidate / ML-retrain-flag / residual-review), and writes an audit trail entity back to DataHub so the next auditor inherits proof of erasure.
+Vismriti automates GDPR Article 17 (right to erasure). Give it one email
+address and it walks DataHub lineage at request time, produces a per-asset
+erasure plan a human approves action by action, executes only what was
+approved, and writes an audit trail so the next auditor inherits proof instead
+of a Slack thread.
 
-**Hackathon submission:** [Build with DataHub — The Agent Hackathon](https://datahub.devpost.com/)
+**Hackathon submission:** [Build with DataHub, The Agent Hackathon](https://datahub.devpost.com/)
 **Track:** Agents That Do Real Work
-**License:** Apache-2.0 (visible in [About](https://github.com/anshul-jain-devx108/Vismriti))
-**Repository:** https://github.com/anshul-jain-devx108/Vismriti
+**License:** Apache-2.0
+**Setup:** [`SETUP.md`](SETUP.md) takes you from a clean machine to a working plan.
 
 ---
 
 ## Demo
 
-**3-minute video:** *[YouTube link — to be added on submission]*
 
-**Live Slack transcript (screenshottable, verbatim):** [`demo_assets/slack_conversation_verbatim.md`](demo_assets/slack_conversation_verbatim.md)
 
-**Live Streamlit report:** [`demo_assets/live_erasure_report.md`](demo_assets/live_erasure_report.md)
+Fastest way to see it work, with no credentials, no database, and no LLM key:
+
+```bash
+git clone https://github.com/anshul-jain-devx108/Vismriti && cd Vismriti
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -e ".[dev]"
+./.venv/bin/erase plan --email priya.sharma@example.com --fixtures
+```
 
 ### Live Azure Container Apps deployment
 
-- **DataHub UI:** https://datahub-frontend.happyhill-72aa3202.centralindia.azurecontainerapps.io
 - **GMS API:** https://datahub-gms.happyhill-72aa3202.centralindia.azurecontainerapps.io *(v1.7.0, `supportsImpactAnalysis: true`)*
 
-**Reproducible client-side proof (any laptop, no auth):**
+Reproducible from any laptop, no auth:
 
 ```bash
-python scripts/verify_live_datahub.py
+./.venv/bin/python scripts/verify_live_datahub.py
 ```
-
-Verified output:
 
 ```
 [Vismriti live-mode connectivity test]
@@ -38,7 +44,7 @@ Verified output:
     version:                  v1.7.0
     supportsImpactAnalysis:   True
     patchCapable:             True
-[2] Healthcare story is seeded live — fetching all 9 assets
+[2] Healthcare story is seeded live, fetching all 9 assets
     healthcare.raw.patients                                     5 aspects  PII source
     healthcare.raw.support_tickets                              4 aspects  PII source
     healthcare.raw.appointments                                 5 aspects  derived
@@ -52,217 +58,226 @@ Verified output:
 [OK] All 9/9 healthcare entities readable from live Azure DataHub.
 ```
 
-**Full topology + 15-revision build log:** [`docs/azure_deploy.md`](docs/azure_deploy.md)
+That deployment has real constraints, and they shaped the design. See
+[what the deployment can and cannot do](#what-the-reference-deployment-can-and-cannot-do)
+before reading the client code, and [`docs/azure_deploy.md`](docs/azure_deploy.md)
+for the measurements.
 
 ---
 
-## The problem — evidence-backed
+## The problem
 
-Every GDPR erasure request is a lineage question: *given one email, find every table, model, and dashboard that touched this person's data*. Privacy teams solve it manually today — Slack + spreadsheets — 6-8 hours per request. Regulators fine companies for the copies they miss:
+Every erasure request is a lineage question: *given one email, find every
+table, model, and dashboard that touched this person's data*. Privacy teams
+answer it by hand today, with Slack and a spreadsheet. Regulators fine
+companies for the copies they miss.
 
 | Regulator action | Amount | Why it matters |
 |---|---|---|
-| IDDesign A/S (Denmark, 2019) | **1.5M DKK** | *"Failure to delete personal data from an older system"* — the exact failure mode Vismriti prevents. |
-| Google Sweden (2020) | **SEK 75M (~€7M)** | Right-to-be-forgotten violations — ceiling for ROI framing. |
-| BKR Netherlands (2020) | **€840K** | Operational failure fine — not just data collection, but *process*. |
+| IDDesign A/S (Denmark, 2019) | **1.5M DKK** | *"Failure to delete personal data from an older system"*, the exact failure mode Vismriti prevents. |
+| Google Sweden (2020) | **SEK 75M (~€7M)** | Right-to-be-forgotten violations. |
+| BKR Netherlands (2020) | **€840K** | An operational process failure, not a collection failure. |
 
-**The hidden layer:** static PII catalogs tag columns at ingest but derived tables *rename, hash, or join* PII into synthetic keys where those tags cannot follow. Analyst sandboxes have zero tags. Walking lineage *at request time* is the only way to catch every copy.
+The data that gets missed is not the data anyone forgot about. It is the data
+no catalog could see. Static PII catalogs tag columns at ingest, but derived
+tables rename, hash, and join that PII into synthetic keys where tags cannot
+follow, and analyst sandboxes carry no tags at all. Walking lineage at request
+time is the only way to catch every copy.
 
 ---
 
-## What Vismriti actually does
+## What Vismriti does
 
-Priya (DPO) types in Slack:
+Priya, a data protection officer, types in Slack:
 
 ```
 @vismriti erase priya.sharma@example.com
 ```
 
-Vismriti replies with a Block-Kit-rendered plan:
+Vismriti replies with a plan, one row per affected asset:
 
-| # | Asset URN | Action | Reason |
+| # | Asset | Action | Reason |
 |---|---|---|---|
-| 1 | `postgres,healthcare.raw.patients` | `anonymize_row` | Null 3 PII columns; keep row for FK integrity |
-| 2 | `postgres,healthcare.raw.support_tickets` | `anonymize_row` | Null reporter email |
-| 3 | `dbt,healthcare.staging.patients_clean` | `dbt_rerun` | Re-run after source anonymization propagates |
-| 4 | `postgres,healthcare.raw.appointments` | `delete_row` | Delete derived subject rows |
-| 5 | `postgres,healthcare.marts.churn_features` | `delete_row` | Delete derived (hash-keyed) subject rows |
-| 6 | `postgres,healthcare.marts.patient_360` | `delete_row` | Delete aggregated row |
-| 7 | `tableau,exec_dashboard.patient_health` | `dashboard_invalidate` | Refresh cache to prevent stale PII |
-| 8 | `mlflow,churn_model_v3` | `ml_model_annotate` | Mark training-data erasure pending |
+| 1 | `postgres,healthcare.raw.patients` | `anonymize_row` | Null 3 PII columns, keep the row so foreign keys survive |
+| 2 | `postgres,healthcare.raw.support_tickets` | `anonymize_row` | Null the reporter email |
+| 3 | `dbt,healthcare.staging.patients_clean` | `dbt_rerun` | Deleting rows would be undone by the next build. Fix the source, rebuild. |
+| 4 | `postgres,healthcare.raw.appointments` | `delete_row` | Derived subject rows |
+| 5 | `postgres,healthcare.marts.churn_features` | `delete_row` | Derived, hash-keyed subject rows |
+| 6 | `postgres,healthcare.marts.patient_360` | `delete_row` | Aggregated row |
+| 7 | `tableau,exec_dashboard.patient_health` | `dashboard_invalidate` | Stale extracts keep rendering PII after the source is clean |
+| 8 | `mlflow,churn_model_v3` | `ml_model_annotate` | Flag training-data erasure for retrain per policy |
 
-**Residual risk (auto-detected):**
+**Residual risk, auto-detected:**
 
 | Asset | Reason |
 |---|---|
-| `analytics_sandbox.priya_analysis_2024` | Downstream of tagged source, but no `Ownership` aspect and no PII tag. **Static classification would miss this.** |
+| `analytics_sandbox.priya_analysis_2024` | Downstream of a tagged source, but no `Ownership` aspect and no PII tag. **Static classification would miss this entirely.** |
 
-Priya says "approve all" → the 8 tools run (dry-run by default) → Vismriti writes an `erasureRequest` audit entity back to DataHub → replies with the URN in Slack. Full transcript: [`demo_assets/slack_conversation_verbatim.md`](demo_assets/slack_conversation_verbatim.md).
+That last row is the argument for the whole project, and the action it takes is
+to *refuse*. No owner means nobody can confirm what depends on the table.
+Guessing breaks a downstream report, and a wrong delete is not reversible, so
+Vismriti escalates instead of generating SQL.
+
+Priya then approves or rejects each destructive action individually. A plan
+with eight actions can end with six approved and two rejected. Only approved
+actions run, dry-run by default, and the audit trail records what actually
+happened, including anything that failed and why.
 
 ---
 
-## Hackathon requirements — where each is satisfied
+## Design: where the model is not allowed to operate
 
-### 1. Working software application
-The service runs today at three surfaces:
+The central constraint is that a language model is good at deciding *which*
+question to ask, and is the wrong tool for deciding *what to delete*. So the
+system is split, with a hard boundary.
 
-| Surface | Command | What it does |
+```
+                 ┌──────────── LLM layer ─────────────┐
+   Slack ───┐    │  Agno Agent, 4 tools               │
+   HTTP  ───┼──▶ │  chooses tools, explains results   │
+   MCP   ───┘    │  never composes SQL                │
+                 └────────────────┬───────────────────┘
+                                  │ calls into, cannot bypass
+                 ┌────────────────▼───────────────────┐
+   CLI   ───┐    │   Deterministic core, zero LLM     │
+   UI    ───┼──▶ │   ErasureOrchestrator              │
+   pytest───┘    │   resolve → discover → traverse →  │
+                 │   plan → execute → write → report  │
+                 └────────────────┬───────────────────┘
+                                  │
+                 ┌────────────────▼───────────────────┐
+                 │  DataHub client                    │
+                 │  fixture | live-rest | mcp-stdio   │
+                 └────────────────────────────────────┘
+```
+
+Three properties fall out of `ErasureOrchestrator` containing no LLM calls and
+no agent-framework import:
+
+- **Auditable.** A regulator asking why a table was deleted gets a rule with a
+  line number, not a model transcript.
+- **Testable.** The full pipeline runs offline against fixtures in under a
+  second, with no network and no key.
+- **Bounded blast radius.** The execute tool ignores any SQL in its arguments
+  and looks the statement up from the stored plan by request id and asset URN.
+  The model cannot fabricate a destructive statement; it can only ask for
+  execution of a plan entry the planner emitted and a human approved.
+
+Destructive tools are gated on explicit confirmation at the framework level, so
+the run halts and waits rather than relying on the model to behave.
+
+Full walkthrough: [`docs/architecture.md`](docs/architecture.md).
+
+---
+
+## Why this goes beyond DataHub out of the box
+
+DataHub tags PII at the column level and knows how assets connect. The layer it
+cannot cover on its own:
+
+- **Analyst sandboxes** forked from `marts.*` with no owner and no tags.
+- **Hash-keyed feature tables** where `email → sha256(email)` breaks tag
+  propagation.
+- **Backfill tables** created after the last catalog run.
+
+The planner's residual rule treats any asset with no owner, no PII tag, and a
+position downstream of a tagged source as residual risk, and surfaces it as a
+manual-review item rather than missing it silently. It fires on the seeded live
+cloud data, on the sandbox table nobody registered.
+
+Vismriti also **exposes itself as an MCP server** through AgentOS, so other
+agents can call its erasure tools.
+
+---
+
+## Interfaces
+
+The same deterministic core is reachable four ways:
+
+| Surface | Command | Needs an LLM key |
 |---|---|---|
-| Slack bot | `python run.py` + Slack workspace install | Priya's natural interface — full LLM-driven multi-turn flow |
-| Streamlit UI | `streamlit run src/vismriti/ui/app.py` | Zero-dependency review-and-approve UI (offline demo) |
-| CLI | `erase run --email … --approve` | Scripting / CI |
-| REST + MCP | `POST /agents/vismriti/runs` + `GET /mcp` | Programmatic API + other agents can call Vismriti over MCP |
+| CLI | `erase plan --email … --fixtures` | No |
+| Streamlit UI | `streamlit run src/vismriti/ui/app.py` | No |
+| HTTP API + MCP server | `python run.py` | Yes |
+| Slack bot | `python run.py` with `SLACK_ENABLED=true` | Yes |
 
-**Verified end-to-end** — Slack transcript, Streamlit report, and pytest suite all in [`demo_assets/`](demo_assets/) and [`tests/`](tests/).
-
-### 2. Uses DataHub as required by the track
-
-**Track:** Agents That Do Real Work.
-
-- **Reads DataHub via MCP-style client** ([`src/vismriti/core/datahub_client.py`](src/vismriti/core/datahub_client.py)) — three interchangeable modes:
-  - `fixture` — offline demo (pre-canned JSON)
-  - `live-rest` — direct HTTPS calls to GMS (matches what `mcp-server-datahub` proxies over MCP)
-  - `mcp-stdio` — spawn `mcp-server-datahub` subprocess for full MCP-protocol-on-the-wire
-- **Takes action** — 8 destructive/protective actions selected by deterministic planner rules, executed via `psycopg2` in dry-run by default
-- **Writes results back to DataHub** — `erasureRequest` audit-trail entity + `erasure_completed` annotations on every affected asset
-
-### 3. Public URL + repo
-
-- **Public repo:** https://github.com/anshul-jain-devx108/Vismriti
-- **Live GMS endpoint (Azure Container Apps):** https://datahub-gms.happyhill-72aa3202.centralindia.azurecontainerapps.io
-- **License:** Apache-2.0, visible at the top of the About section on GitHub. Same license bundled at [`LICENSE`](LICENSE).
-
-### 4. Sample outputs (`examples/` folder)
-
-Every generated artifact type is checked into the repo so judges can eyeball quality without running the code:
-
-- [`examples/sample_request.json`](examples/sample_request.json) — what a client submits
-- [`examples/sample_plan.md`](examples/sample_plan.md) — human-readable plan with generated SQL
-- [`examples/sample_audit_trail.json`](examples/sample_audit_trail.json) — machine-readable audit trail
-- [`demo_assets/live_erasure_report.md`](demo_assets/live_erasure_report.md) — actual Streamlit-generated report from a live Azure run
-- [`demo_assets/slack_conversation_verbatim.md`](demo_assets/slack_conversation_verbatim.md) — the Slack demo transcript verbatim
-
-### 5. Demo video
-
-3-minute YouTube link — added on submission. Recording follows [`docs/demo_script.md`](docs/demo_script.md) beat sheet.
+Setup for each, including the Slack app manifest and scopes, is in
+[`SETUP.md`](SETUP.md) and [`docs/slack_setup.md`](docs/slack_setup.md).
 
 ---
 
-## Architecture at a glance
+## What the reference deployment can and cannot do
 
-```
-┌────────────┐   ┌──────────────┐   ┌──────────────────┐
-│ Priya (DPO)│──▶│ Slack / UI /│──▶│  Vismriti Agent  │
-└────────────┘   │  CLI / REST │   │  (Agno + GPT-5.6)│
-                 └──────────────┘   └────────┬─────────┘
-                                             │  MCP-style tools
-                                             ▼
-                                    ┌──────────────────┐
-                                    │ DataHub GMS      │
-                                    │ (v1.7.0, Azure)  │
-                                    │ read + write     │
-                                    └────────┬─────────┘
-                                             │
-                        ┌────────────────────┼────────────────────┐
-                        ▼                    ▼                    ▼
-                ┌───────────────┐   ┌───────────────┐   ┌───────────────┐
-                │ Postgres      │   │ Tableau       │   │ MLflow        │
-                │ (demo target) │   │ (flagged)     │   │ (annotated)   │
-                └───────────────┘   └───────────────┘   └───────────────┘
+The Azure GMS runs v1.7.0 without Kafka and with empty search and graph
+indexes. Measured with `curl`, reproducible by anyone:
 
-Write-back (rubric-critical):
-    each affected asset  ──▶  annotation  erasure_completed
-    all affected assets  ──▶  new entity  erasureRequest  (audit-trail root)
-```
+| Operation | Result |
+|---|---|
+| `GET /entities/{urn}` | Works. All 9 seeded entities readable. |
+| `POST /entities?action=search` | HTTP 200, `numEntities: 0`. The search index is empty, so tag-based discovery over the API returns nothing. |
+| `GET /relationships` | HTTP 200, `total: 0`. The graph index is empty, so lineage cannot be traversed over the API. |
+| `POST /aspects?action=ingestProposal` | Blocks, then times out. Every proposal is published to a broker that is not deployed, so writes cannot land. |
 
-**Full diagram + component-by-component walkthrough:** [`docs/architecture.md`](docs/architecture.md) · [`../ARCHITECTURE.md`](../ARCHITECTURE.md) · Eraser diagram: https://app.eraser.io/workspace/wVy1fWdFMhAJG7E0OvMO
+**Live mode plans 7 of the 9 assets that fixture mode plans, and the two
+missing ones are ingestion gaps rather than client bugs.** Both were traced by
+dumping the entities' actual aspects:
 
----
+| Asset | Why it is missing live |
+|---|---|
+| `mlflow,churn_model_v3` | Its `mlModelProperties` carries no `trainingData` or `trainingJobs`. The lineage edge exists only as English prose inside the description string. The client parses those fields and will pick the model up the moment the aspect is ingested. |
+| `postgres,healthcare.raw.support_tickets` | The live entity has no `schemaMetadata` aspect at all, so it carries no column-level PII tags and cannot be discovered as a PII source. |
 
-## Why Vismriti goes beyond DataHub's out-of-the-box features
+Both need those two entities re-ingested, which requires the write path, which
+requires Kafka. Vismriti logs a warning naming any seeded source that yields no
+PII columns, so the gap is visible at runtime rather than silent.
 
-DataHub already tags PII at the column level. The **hidden layer** — the class of assets DataHub's static tags cannot cover on their own — is:
+Worth stating explicitly, because it was a deliberate choice: the model's
+description literally reads *"Trained on marts.churn_features"*, and Vismriti
+does **not** regex that string to synthesise a lineage edge. Scraping prose to
+decide what a right-to-erasure run touches is the kind of thing that demos
+green and misfires in production. It flags rather than fabricates.
 
-- **Analyst sandboxes** with no owner, no tags, forked from `marts.*`
-- **Hash-keyed feature tables** where `email → sha256(email)` breaks tag propagation
-- **Backfill tables** created after the last catalog run
+Two further consequences, both visible in the code rather than hidden behind a
+happy path:
 
-Vismriti's planner rule `_is_orphan()` treats any asset that has (no owner) AND (no PII tag) AND (is downstream of tagged sources) as **residual risk** — surfaced to Priya as a manual-review item rather than silently missed. This is the "beyond DataHub OOB" originality claim. It fires reliably on the seeded live cloud data ([`demo_assets/slack_conversation_verbatim.md`](demo_assets/slack_conversation_verbatim.md), turn 1).
+**Discovery and traversal are seeded.** The live client is given an explicit
+URN set through `DATAHUB_SEED_URNS` and `DATAHUB_PII_SOURCE_URNS` and
+reconstructs lineage from each entity's own `UpstreamLineage`, `DashboardInfo`,
+and `MLModelProperties` aspects, which are readable. Against an indexed
+DataHub, the search and relationships endpoints are used normally.
 
----
+**Write-back reports failure honestly.** The ingest call is attempted with a
+short timeout and its real outcome is recorded on the execution report. It does
+not return a fabricated success. In this configuration the durable audit record
+is the JSON and Markdown pair under `runs/`.
 
-## Quickstart
-
-### Option A — offline fixture demo (fastest, no external services)
-
-```bash
-git clone https://github.com/anshul-jain-devx108/Vismriti
-cd Vismriti
-pip install -e .
-
-# Plan only
-erase plan --email priya.sharma@example.com --fixtures
-
-# Plan + auto-approve + execute (dry-run) + write-back
-erase run --email priya.sharma@example.com --fixtures --approve
-```
-
-### Option B — hit the live Azure DataHub deployment
-
-```bash
-git clone https://github.com/anshul-jain-devx108/Vismriti
-cd Vismriti
-pip install -e .
-
-# 9 healthcare entities are already seeded on the live GMS at
-# https://datahub-gms.happyhill-72aa3202.centralindia.azurecontainerapps.io
-# — no local setup needed.
-python scripts/verify_live_datahub.py     # proves 9/9 entities readable
-
-# Full live-mode plan via the Streamlit UI:
-streamlit run src/vismriti/ui/app.py
-# In the sidebar, pick "Live REST (Azure)" and click "Plan erasure"
-```
-
-### Option C — Slack bot (full LLM flow)
-
-```bash
-cp .env.example .env
-# Fill: AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT,
-#       SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET
-python run.py
-# Slack manifest + install instructions: docs/slack_setup.md
-```
-
-### Option D — DataHub REST/MCP server surface
-
-```bash
-python run.py
-# Now available:
-#   http://localhost:7777/docs                       Swagger UI
-#   http://localhost:7777/agents                     list registered agents
-#   POST http://localhost:7777/agents/vismriti/runs  trigger the agent
-#   http://localhost:7777/mcp                        MCP server — other agents can call Vismriti
-```
+A compliance tool that fakes a successful deletion record is worse than no
+tool, so the failure is surfaced rather than smoothed over. Against a DataHub
+with Kafka and populated indexes, the same code path writes the annotations and
+the `erasureRequest` entity. Details and a deployment recipe:
+[`docs/azure_deploy.md`](docs/azure_deploy.md).
 
 ---
 
-## Where the actual DELETE runs (warehouse-coupling policy)
+## Where the actual DELETE runs
 
-Vismriti's contract with the outside world is **only DataHub**:
+Vismriti's contract with the outside world is DataHub: it reads PII tags and
+lineage, and it writes annotations plus an `erasureRequest` audit entity. It
+does not need warehouse credentials for either.
 
-- **Read** — Vismriti calls DataHub for PII column tags + lineage.
-- **Write** — Vismriti writes annotations + an `erasureRequest` audit entity back to DataHub.
+The `UPDATE` and `DELETE` statements have to run somewhere, and there are two
+paths:
 
-Vismriti **does not require direct warehouse credentials** for either of those.
+**Demo.** Vismriti runs the SQL itself through `psycopg2` against the seeded
+local Postgres from `docker-compose.yml`. Fine for a fixture warehouse, not how
+production should be set up.
 
-The *actual* `UPDATE`/`DELETE` SQL has to run somewhere; Vismriti ships two paths:
-
-**Option 1 (default, demo):** Vismriti runs the SQL itself via `psycopg2` against the seeded local Postgres. Fine for a fixture Postgres, **not how production should be set up**.
-
-**Option 2 (production):** Leave `PG_*` env vars unset. Vismriti still plans every action, gates each `execute_erasure_action` behind an HITL confirmation (post-hackathon: full Slack Block Kit approval flow via Agno's `/approvals` REST), emits the plan as JSON, and writes the audit trail. Your own dbt / Airflow / governance workflow — the one that already has warehouse credentials — consumes the plan and runs the SQL. Vismriti stays out of the sensitive-credential business.
-
-**Summary:** the `PG_*` variables are demo plumbing. Production integrations should plug their own executor and leave those env vars empty.
+**Production.** Leave the `PG_*` variables unset. Vismriti still plans every
+action, gates each destructive one behind an approval, emits the plan as JSON,
+and writes the audit trail. Your own dbt job or Airflow DAG, the one that
+already holds production credentials, consumes `actions[].sql` and
+`actions[].command` and runs them through your existing governance channel.
+Vismriti stays out of the credential business.
 
 ---
 
@@ -270,100 +285,87 @@ The *actual* `UPDATE`/`DELETE` SQL has to run somewhere; Vismriti ships two path
 
 ```
 Vismriti/
-├── LICENSE                       # Apache 2.0
-├── README.md                     # this file
+├── SETUP.md                      # clone to working plan
+├── README.md
+├── LICENSE                       # Apache-2.0
 ├── pyproject.toml
-├── docker-compose.yml
-├── run.py                        # AgentOS launcher (uvicorn wrapper)
+├── docker-compose.yml            # demo Postgres warehouse
+├── run.py                        # AgentOS launcher
 │
-├── src/vismriti/                 # Python package
+├── src/vismriti/
 │   ├── main.py                   # AgentOS FastAPI app
 │   ├── cli.py                    # `erase` CLI (Typer)
 │   │
-│   ├── core/                     # Domain models + clients
-│   │   ├── models.py             #   pydantic domain models
-│   │   └── datahub_client.py     #   3-mode DataHub client (fixture / live-rest / mcp-stdio)
+│   ├── core/
+│   │   ├── models.py             # pydantic domain models
+│   │   └── datahub_client.py     # 3-mode client: fixture / live-rest / mcp-stdio
 │   │
-│   ├── services/                 # Business logic
-│   │   ├── orchestrator.py       #   ErasureOrchestrator (linear pipeline)
-│   │   ├── planner.py            #   per-asset deterministic rules
-│   │   ├── lineage.py            #   BFS forward traversal
-│   │   ├── subject_resolver.py   #   email → id, email_hash
-│   │   ├── executor.py           #   runs approved SQL (psycopg2, dry-run default)
-│   │   ├── writeback.py          #   DataHub annotations + erasureRequest entity
-│   │   ├── report.py             #   Markdown + JSON emitters
-│   │   ├── sql_templates/        #   Jinja2 SQL templates (anonymize / delete / anonymize_fk)
-│   │   └── fixtures/             #   9-asset offline demo JSON
+│   ├── services/                 # deterministic core, no LLM
+│   │   ├── orchestrator.py       # the linear pipeline
+│   │   ├── planner.py            # per-asset rules + SQL rendering
+│   │   ├── lineage.py            # forward traversal
+│   │   ├── subject_resolver.py   # email -> internal ids, email hash
+│   │   ├── executor.py           # runs approved SQL, dry-run default
+│   │   ├── writeback.py          # DataHub annotations + erasureRequest
+│   │   ├── report.py             # Markdown + JSON audit artifacts
+│   │   ├── sql_templates/        # Jinja SQL, the only source of destructive statements
+│   │   └── fixtures/             # 9-asset offline story
 │   │
-│   ├── utils/                    # Generic helpers
-│   │   └── config.py             #   env-driven pydantic Settings
+│   ├── agent/                    # Agno layer
+│   │   ├── agent.py              # build_agent(db)
+│   │   ├── prompt.py             # system instructions
+│   │   └── tools.py              # 4 tools, 2 of them confirmation-gated
 │   │
-│   ├── agent/                    # Agno LLM agent
-│   │   ├── agent.py              #   build_agent(db) — factory
-│   │   ├── prompt.py             #   system prompt
-│   │   └── tools.py              #   4 @tool functions (plan / execute / finalize / list PII)
-│   │
-│   └── ui/
-│       └── app.py                #   Streamlit review-and-approve UI
+│   ├── utils/config.py           # env-driven settings
+│   └── ui/app.py                 # Streamlit review UI
 │
-├── skills/erasure_skill/         # DataHub Skill package (OSS bonus contribution)
-├── examples/                     # sample_request, sample_plan, sample_audit_trail (JSON + MD)
-├── demo_assets/                  # live_erasure_report.md + slack_conversation_verbatim.md
+├── examples/                     # sample request, plan, and audit trail
 ├── scripts/
-│   ├── verify_live_datahub.py    # client-side connectivity proof against Azure
-│   ├── seed_healthcare_entities.sql   # seeds 9 healthcare entities into live GMS
-│   └── init_healthcare.sql       # Postgres seed for local demo
-├── tests/                        # pytest suite (8 tests, all passing)
+│   ├── verify_live_datahub.py    # live connectivity proof
+│   └── init_healthcare.sql       # Postgres seed for the demo warehouse
+├── tests/                        # pytest, runs offline
 └── docs/
     ├── architecture.md
-    ├── azure_deploy.md           # Azure Container Apps topology + 15-revision build log
-    ├── slack_setup.md            # Slack app manifest + ngrok + token flow
-    ├── demo_script.md            # 3-min video beat sheet + verbatim voice-over
-    ├── devpost_submission.md     # paste-ready form text
+    ├── azure_deploy.md           # topology + measured endpoint behaviour
+    ├── slack_setup.md            # app manifest, scopes, endpoints
+    ├── demo_script.md            # 3-minute beat sheet
+    ├── devpost_submission.md
     └── submission_checklist.md
 ```
 
 ---
 
-## Judging rubric — where each criterion lands
+## Judging rubric
 
 | Criterion | Evidence |
 |---|---|
-| **Use of DataHub** | `datahub_client.py` reads GMS (search, lineage, get_entity) AND writes back (annotations + `erasureRequest` entity). Three interchangeable client modes: fixture, live-REST, MCP-stdio. **Bidirectional.** |
-| **Technical Execution** | End-to-end verified: Slack transcript ([`demo_assets/`](demo_assets/)), Streamlit report, `verify_live_datahub.py` (9/9 assets), `pytest` (8/8 tests), live Azure Container Apps deployment (10 resources), Slack app on real workspace. |
-| **Originality** | Residual-risk detection: `_is_orphan()` planner rule surfaces assets DataHub's static tags cannot cover (no owner + no PII tag + downstream). Vismriti also *exposes itself as an MCP server* via AgentOS — other agents can call Vismriti's erasure tools over MCP. |
-| **Real-World Usefulness** | Priya persona · 6-8 hours → 5 minutes · fine-cost delta of 500K–7M € avoided per correct erasure. Slack is where DPOs already work. |
-| **Submission Quality** | This README + [`docs/`](docs/) (5 docs) + [`demo_assets/`](demo_assets/) + [`examples/`](examples/) + Eraser diagram + Apache-2.0 visible in About. |
-| **Bonus — OSS contribution** | Reusable [erasure Skill](skills/erasure_skill/) packaged for `datahub-project/datahub-skills` catalog. |
-
----
-
-## Evidence sources (real, cited)
-
-- [GDPR fines and notices — Wikipedia](https://en.wikipedia.org/wiki/GDPR_fines_and_notices) — IDDesign, Google Sweden, Google Belgium, BKR
-- [Monte Carlo — State of Data Quality 2023](https://montecarlo.ai/state-of-data-quality/) — labor-cost baseline
-- [LinkedIn Engineering — DataHub origin (Aug 2019)](https://www.linkedin.com/blog/engineering/archive/data-hub) — justifies why the lineage-graph approach exists at all
-
+| **Use of DataHub** | [`datahub_client.py`](src/vismriti/core/datahub_client.py) reads GMS and attempts write-back, across three interchangeable modes: fixture, live REST, and `mcp-server-datahub` over stdio. Reads are verified live; the write path is implemented and reports truthfully that it cannot land on a Kafka-less deployment. |
+| **Technical Execution** | Deterministic core with an offline test suite, a confirmation gate that halts the run, per-action approval that survives restart, identifier validation before any SQL is rendered, and live metadata read from Azure Container Apps. Reproduce with `scripts/verify_live_datahub.py` and `pytest`. |
+| **Originality** | Residual-risk detection: the planner surfaces assets that static tags structurally cannot cover, no owner plus no PII tag plus downstream of a tagged source. Vismriti also exposes itself as an MCP server, so other agents can call its erasure tools. |
+| **Real-World Usefulness** | Erasure is a lineage question and lineage is what DataHub already knows. Approval happens in Slack, where DPOs already work, and the output is an audit artifact a regulator can read. |
+| **Submission Quality** | This README, [`SETUP.md`](SETUP.md), six documents under [`docs/`](docs/), sample artifacts under [`examples/`](examples/), and an honest account of what the reference deployment cannot do. |
 ---
 
 ## Development
 
 ```bash
-pip install -e ".[dev]"
-pytest -v        # 8 tests: 7 planner + 1 e2e fixture run
-ruff check src/
+uv pip install --python .venv/bin/python -e ".[dev]"
+./.venv/bin/python -m pytest tests/ -q
+./.venv/bin/python -m ruff check src/
 ```
 
-All 8 tests pass in fixture mode with zero external dependencies. CI-ready.
+The suite runs in fixture mode with zero external dependencies.
+
+---
+
+## Evidence sources
+
+- [GDPR fines and notices, Wikipedia](https://en.wikipedia.org/wiki/GDPR_fines_and_notices) for IDDesign, Google Sweden, and BKR
+- [Monte Carlo, State of Data Quality 2023](https://montecarlo.ai/state-of-data-quality/) for the labour-cost baseline
+- [LinkedIn Engineering, DataHub origin](https://www.linkedin.com/blog/engineering/archive/data-hub) for why the lineage-graph approach exists
 
 ---
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE). Built with Agno (Apache-2.0).
-
----
-
-## AI-generation disclosure
-
-Portions of this repository (README text, architecture prose, docstrings, and select scaffolding code) were drafted with the assistance of a large language model (Claude / Anthropic) during the hackathon window. The engineering decisions, deterministic planner rules, deployment architecture, Azure infrastructure, live GMS seeding, MCP-style client design, and every commit's final review were performed by the human author. All code has been tested; the pytest suite is green.
+Apache-2.0, see [LICENSE](LICENSE). Built with Agno (Apache-2.0).

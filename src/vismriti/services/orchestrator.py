@@ -1,18 +1,9 @@
-"""Vismriti orchestrator — the deterministic core of the erasure workflow.
+"""Deterministic core of the erasure workflow.
 
-Sequences the phases:
-
-    resolve -> discover -> traverse -> plan -> (approve) -> execute -> write-back -> report
-
-Distinct from ``agno.agent.Agent``: this class contains ZERO LLM calls and is
-the substrate the Agno-wrapping layer (`vismriti.agent.tools` +
-`vismriti.main`) calls into. Direct users (CLI, Streamlit, DataHub Skill,
-pytest) instantiate `ErasureOrchestrator` without any Agno / LLM dependency —
-that's the whole point of the separation.
-
-Deterministic logic (traversal, action selection, SQL rendering) stays
-in code because destructive operations should be auditable line-by-line,
-not "the model decided."
+Sequences resolve -> discover -> traverse -> plan -> (approve) -> execute ->
+write-back. Contains no LLM calls: traversal, action selection and SQL
+rendering stay in code so destructive operations are auditable line by line.
+The Agno layer, CLI and Streamlit UI all call into this.
 """
 
 from __future__ import annotations
@@ -20,20 +11,16 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from ..core.datahub_client import DataHubClient
+from ..core.models import ErasurePlan, ExecutionReport
 from .executor import Executor
 from .lineage import collect_downstream
-from ..core.models import ErasurePlan, ExecutionReport
 from .planner import build_plan
 from .subject_resolver import resolve_subject
 from .writeback import write_back
 
 
 class ErasureOrchestrator:
-    """Stateless orchestrator - all state is on the plan/report.
-
-    Not an "agent" in the LLM sense — no reasoning, no tool-choice. It is
-    the linear pipeline that the Agno layer (or CLI / Streamlit) calls into.
-    """
+    """Stateless orchestrator - all state lives on the plan and the report."""
 
     def __init__(
         self,
@@ -66,10 +53,14 @@ class ErasureOrchestrator:
             for action in plan.actions:
                 action.approved = True
 
+        # Stamp how this run was carried out before anything executes, so the
+        # report cannot describe simulated work as real.
         report = ExecutionReport(
             request_id=plan.request_id,
             subject_email=plan.subject.input_email,
             started_at=datetime.now(timezone.utc),
+            dry_run=self.executor.dry_run,
+            fixture_mode=self.client.use_fixtures,
         )
 
         for action in plan.actions:

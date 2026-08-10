@@ -1,14 +1,33 @@
 """Execute approved plan actions against the target warehouse.
 
-Never called on unapproved actions. Never called on residual actions.
-Every executed action is stamped back on the PlannedAction so the report
-carries the ground truth of what actually ran vs. what was proposed.
+Only approved, non-residual actions are touched. Whatever happens is stamped
+back on the PlannedAction, so the report carries what actually ran rather than
+what was proposed. Actions Vismriti cannot perform itself are marked advisory
+and left unexecuted; nothing here reports work it did not do.
 """
 
 from __future__ import annotations
 
-from ..utils.config import settings
+import logging
+
 from ..core.models import ActionType, PlannedAction
+from ..utils.config import settings
+
+logger = logging.getLogger(__name__)
+
+SQL_ACTIONS = (ActionType.ANONYMIZE_ROW, ActionType.DELETE_ROW)
+
+# Vismriti has no dbt runner, BI client or model registry client, so these
+# actions are proposals for an operator or a downstream pipeline.
+ADVISORY_ACTIONS = (
+    ActionType.DBT_RERUN,
+    ActionType.DASHBOARD_INVALIDATE,
+    ActionType.ML_MODEL_ANNOTATE,
+)
+
+ADVISORY_NOTE = (
+    "advisory action - requires external system (dbt/BI/ML platform); not executed by Vismriti"
+)
 
 
 class Executor:
@@ -21,27 +40,39 @@ class Executor:
         if action.is_residual:
             return
 
-        if action.action_type in (
-            ActionType.ANONYMIZE_ROW,
-            ActionType.DELETE_ROW,
-        ):
-            if action.sql is None:
-                action.execution_error = "No SQL to execute"
-                return
-            if self.dry_run:
-                action.executed = True
-                return
-            try:
-                self._run_sql(action.sql)
-                action.executed = True
-            except Exception as exc:
-                action.execution_error = str(exc)
+        if action.action_type in SQL_ACTIONS:
+            self._execute_sql(action)
             return
 
-        # Non-SQL actions: dbt re-run, dashboard flag, ML annotate.
-        # For the MVP we mark these as executed at plan time - the actual
-        # side-effect is a DataHub annotation, which happens in writeback.
-        action.executed = True
+        if action.action_type in ADVISORY_ACTIONS:
+            action.advisory = True
+            action.executed = False
+            action.execution_error = None
+            logger.info("%s: %s", action.asset.urn, ADVISORY_NOTE)
+            return
+
+        action.executed = False
+        action.execution_error = f"no executor for action type '{action.action_type.value}'"
+
+    def _execute_sql(self, action: PlannedAction) -> None:
+        if action.sql is None:
+            action.executed = False
+            action.execution_error = "No SQL to execute"
+            return
+        if self.dry_run:
+            # Nothing is sent. dry_run is stamped so no reader of this action
+            # can mistake a rendered statement for a changed row.
+            action.dry_run = True
+            action.executed = True
+            return
+        try:
+            self._run_sql(action.sql)
+            action.dry_run = False
+            action.executed = True
+        except Exception as exc:
+            action.executed = False
+            action.execution_error = str(exc)
+            logger.exception("SQL execution failed for %s", action.asset.urn)
 
     def _run_sql(self, sql: str) -> None:
         import psycopg2  # type: ignore

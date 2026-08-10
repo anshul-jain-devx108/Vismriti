@@ -1,11 +1,8 @@
-"""Forward-lineage traversal from PII-tagged source columns.
+"""Forward-lineage traversal from PII-tagged source datasets.
 
-Given the set of source datasets that contain the subject's PII, walk
-DOWNSTREAM through the DataHub graph collecting every dataset, dashboard,
-chart, ML feature table, and model that could hold a derived copy.
-
-BFS not DFS - depth matters for the report ("2 hops from source") and
-BFS gives deterministic ordering.
+Walks DOWNSTREAM through the DataHub graph from each source URN, collecting
+every dataset, dashboard, chart, ML feature table, and model that could hold a
+derived copy. BFS, so the first depth reached for a URN is the shortest one.
 """
 
 from __future__ import annotations
@@ -23,29 +20,36 @@ async def collect_downstream(
 ) -> list[Asset]:
     """BFS forward from each source URN, deduplicating by URN.
 
-    Returns assets in BFS order (shallowest first). Depth is stamped on
-    each returned Asset so the planner and report can group by hops.
+    Returns assets shallowest first. Depth is stamped on each returned Asset
+    so the planner and report can group by hops. A URN is queued at most once,
+    which bounds the traversal even if the graph contains cycles or a URN that
+    cannot be fetched.
     """
-    seen: dict[str, Asset] = {}
-    queue: deque[tuple[str, int]] = deque((urn, 0) for urn in source_urns)
+    found: dict[str, Asset] = {}
+    queued: set[str] = set()
+    queue: deque[tuple[str, int]] = deque()
+
+    for urn in source_urns:
+        if urn not in queued:
+            queued.add(urn)
+            queue.append((urn, 0))
 
     while queue:
         urn, depth = queue.popleft()
-        if urn in seen:
-            continue
 
         asset = await client.get_entity(urn)
         if asset is None:
             continue
         asset.depth = depth
-        seen[urn] = asset
+        found[urn] = asset
 
         if depth >= max_depth:
             continue
 
-        downstream = await client.get_downstream_lineage(urn, max_depth=1)
-        for child in downstream:
-            if child.urn not in seen:
-                queue.append((child.urn, depth + 1))
+        for child in await client.get_downstream_lineage(urn, max_depth=1):
+            if child.urn in queued:
+                continue
+            queued.add(child.urn)
+            queue.append((child.urn, depth + 1))
 
-    return sorted(seen.values(), key=lambda a: (a.depth, a.urn))
+    return sorted(found.values(), key=lambda a: (a.depth, a.urn))

@@ -1,31 +1,8 @@
-"""The Vismriti LLM agent - Agno Agent instance.
+"""Factory for the Vismriti Agno Agent.
 
-Composes:
-    - the model (resolved via `_resolve_model()` below)
-    - the system prompt from `prompt.py`
-    - the 4 tools from `tools.py` (2 HITL-gated, 2 read-only)
-    - the shared DB (injected at runtime by `main.py` via `build_agent(db)`)
-
-Kept as a plain factory function (not a module-level `Agent(...)` call) so
-that:
-    (a) importing this module has zero side effects (safer for tests + evals)
-    (b) `main.py` can inject the same DB instance into both the Agent and
-        the AgentOS runtime
-
-# Model resolution
-
-Two paths are supported, both driven from `.env`:
-
-    1. OPENAI-COMPATIBLE ENDPOINT (Azure OpenAI, LiteLLM, vLLM, etc.)
-       If `AZURE_OPENAI_ENDPOINT` (or `OPENAI_BASE_URL`) is set, we build
-       an `OpenAILike` model pointed at that base URL. Model id is taken
-       from `AZURE_OPENAI_DEPLOYMENT` (falls back to the deployment name
-       parsed out of ERASURE_AGENT_MODEL if you used `openai:<name>`).
-
-    2. AGNO MODEL STRING
-       Otherwise we pass `ERASURE_AGENT_MODEL` (e.g. `openai:gpt-5.6`,
-       `anthropic:claude-sonnet-5`) directly to Agno, which handles the
-       provider dispatch via its 30+ built-in adapters.
+Composes the resolved model, the system prompt, the four tools, and the DB
+that `main.py` injects. Importing this module has no side effects; the agent
+is only built when `build_agent(db)` is called.
 """
 
 from __future__ import annotations
@@ -40,13 +17,11 @@ from .tools import VISMRITI_TOOLS
 
 
 def _resolve_model() -> Any:
-    """Return either an `OpenAILike` instance (Azure / custom endpoint) or a
-    plain Agno model string that Agno will dispatch itself.
+    """Return the model for the Agent.
 
-    Ordered by specificity:
-      1. Azure OpenAI Service (endpoint + deployment)
-      2. Generic OpenAI-compatible base URL (OPENAI_BASE_URL env)
-      3. Agno model string (`ERASURE_AGENT_MODEL`)
+    If `AZURE_OPENAI_ENDPOINT` is set, build an `OpenAILike` pointed at that
+    endpoint with the deployment from `AZURE_OPENAI_DEPLOYMENT`. Otherwise
+    return the `ERASURE_AGENT_MODEL` string and let Agno dispatch it.
     """
 
     endpoint = settings.azure_openai_endpoint or ""
@@ -55,14 +30,13 @@ def _resolve_model() -> Any:
 
         deployment = settings.azure_openai_deployment or _model_id_from_string(settings.model)
         api_key = settings.azure_openai_api_key or settings.openai_api_key or "not-provided"
-        # Azure OpenAI's OpenAI-compatible surface lives at /openai/v1
-        # (not the root). Trim trailing slash and append if user hasn't.
+        # Azure OpenAI's OpenAI-compatible surface lives at /openai/v1, not the
+        # root. Trim any trailing slash and append it if the user has not.
         base_url = endpoint.rstrip("/")
         if not base_url.endswith("/openai/v1"):
             base_url = f"{base_url}/openai/v1"
-        # Newer Azure OpenAI models (o1, gpt-5 family) reject `max_tokens` —
-        # they need `max_completion_tokens`. Drop the field so Agno's default
-        # doesn't trigger a 400.
+        # o1 and gpt-5 family deployments reject `max_tokens` and want
+        # `max_completion_tokens`, so drop the field rather than send a 400.
         return OpenAILike(
             id=deployment,
             api_key=api_key,
@@ -71,7 +45,6 @@ def _resolve_model() -> Any:
             max_tokens=None,
         )
 
-    # Fallback: Agno model string (e.g. "openai:gpt-5.6", "anthropic:claude-sonnet-5")
     return settings.model or "openai:gpt-5.6"
 
 

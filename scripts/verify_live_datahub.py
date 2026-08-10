@@ -5,10 +5,10 @@ This script proves that Vismriti's DataHubClient (in `use_fixtures=False`
 mode) can talk to the LIVE DataHub deployment on Azure Container Apps.
 
 The read path here is what `mcp-server-datahub` proxies over the MCP
-protocol — GMS's REST surface is the ground truth.
+protocol. GMS's REST surface is the ground truth.
 
 The healthcare story that Vismriti's fixture mode demos offline is
-ALSO seeded live in this Azure deployment — so the exact same 9-asset
+ALSO seeded live in this Azure deployment, so the exact same 9-asset
 lineage graph Vismriti's planner walks in fixture mode can be fetched
 from real cloud infrastructure by this script.
 
@@ -73,7 +73,7 @@ def main() -> None:
     print(f"    patchCapable:             {cfg['patchCapable']}")
     print()
 
-    print("[2] Healthcare story is seeded live — fetching all 9 assets")
+    print("[2] Healthcare story is seeded live: fetching all 9 assets")
     print("    This is the same lineage graph Vismriti walks in fixture mode.")
     print()
     print(f"    {'URN suffix':<58s}{'  aspects fetched':<40s}{'note'}")
