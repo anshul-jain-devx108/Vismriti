@@ -17,7 +17,6 @@ metadata service authentication disabled.
         Azure Container Apps environment
         happyhill-72aa3202 (centralindia)
         │
-        ├── datahub-frontend      ─── public HTTPS ingress, DataHub UI
         │
         ├── datahub-gms           ─── public HTTPS ingress, REST + GraphQL
         │        │
