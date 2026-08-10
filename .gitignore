@@ -1,0 +1,42 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+.env
+.env.local
+
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local run artifacts
+runs/
+*.log
+audit_trails/
+plans/
+
+# Local-only planning / design docs (kept out of the public repo).
+# The repository is the executable artifact; these notes were internal
+# working documents during the hackathon and are not for distribution.
+/PRODUCT_EXPLAINER.md
+/DATA_OWNERSHIP.md
+/SPEC.md
+/ARCHITECTURE.md
+/AGNO_INTEGRATION.md
+/STATE.md
+/problem-statements.md

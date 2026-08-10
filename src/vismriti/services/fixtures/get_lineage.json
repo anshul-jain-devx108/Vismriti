@@ -1,0 +1,67 @@
+{
+  "entities": [
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.raw.appointments,PROD)",
+      "name": "raw.appointments",
+      "platform": "postgres",
+      "owners": ["data-eng@example.com"],
+      "pii_columns": [],
+      "upstreams": ["urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.raw.patients,PROD)"],
+      "depth": 1
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,healthcare.staging.patients_clean,PROD)",
+      "name": "staging.patients_clean",
+      "platform": "dbt",
+      "owners": ["data-eng@example.com"],
+      "pii_columns": [],
+      "upstreams": ["urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.raw.patients,PROD)"],
+      "depth": 1
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.marts.patient_360,PROD)",
+      "name": "marts.patient_360",
+      "platform": "postgres",
+      "owners": ["analytics@example.com"],
+      "pii_columns": [],
+      "upstreams": ["urn:li:dataset:(urn:li:dataPlatform:dbt,healthcare.staging.patients_clean,PROD)"],
+      "depth": 2
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.marts.churn_features,PROD)",
+      "name": "marts.churn_features",
+      "platform": "postgres",
+      "owners": ["ml-platform@example.com"],
+      "pii_columns": [],
+      "upstreams": ["urn:li:dataset:(urn:li:dataPlatform:dbt,healthcare.staging.patients_clean,PROD)"],
+      "depth": 2
+    },
+    {
+      "urn": "urn:li:dashboard:(tableau,exec_dashboard.patient_health)",
+      "name": "tableau.exec_dashboard",
+      "platform": "tableau",
+      "owners": ["exec-analytics@example.com"],
+      "pii_columns": [],
+      "upstreams": ["urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.marts.patient_360,PROD)"],
+      "depth": 3
+    },
+    {
+      "urn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,churn_model_v3,PROD)",
+      "name": "ml.churn_model_v3",
+      "platform": "mlflow",
+      "owners": ["ml-platform@example.com"],
+      "pii_columns": [],
+      "upstreams": ["urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.marts.churn_features,PROD)"],
+      "depth": 3
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.analytics_sandbox.priya_analysis_2024,PROD)",
+      "name": "analytics_sandbox.priya_analysis_2024",
+      "platform": "postgres",
+      "owners": [],
+      "pii_columns": [],
+      "upstreams": ["urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.marts.patient_360,PROD)"],
+      "depth": 3
+    }
+  ]
+}

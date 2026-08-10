@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vismriti"
+version = "0.1.0"
+description = "Vismriti (विस्मृति, 'forgetting') — an AI agent that automates GDPR Article 17 (right-to-erasure) via DataHub lineage traversal"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Vismriti Contributors" }]
+keywords = ["datahub", "gdpr", "erasure", "lineage", "agent", "mcp", "privacy", "vismriti"]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Database",
+]
+dependencies = [
+    "agno>=2.8.7",
+    "openai>=1.50.0",
+    "mcp>=1.0.0",
+    "typer>=0.12.0",
+    "rich>=13.7.0",
+    "streamlit>=1.35.0",
+    "jinja2>=3.1.0",
+    "psycopg2-binary>=2.9.9",
+    "pydantic>=2.7.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "slack-sdk>=3.35.0",
+    "aiohttp>=3.9.0",
+    "fastmcp>=0.4.0",
+    "sqlalchemy>=2.0",
+    "aiosqlite>=0.20.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.5.0",
+]
+
+[project.scripts]
+erase = "vismriti.cli:app"
+vismriti = "vismriti.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/anshul-jain-devx108/Vismriti"
+Repository = "https://github.com/anshul-jain-devx108/Vismriti"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"vismriti.services" = ["sql_templates/*.sql.j2", "fixtures/*.json"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

@@ -1,0 +1,69 @@
+{
+  "request_id": "20260808-100000-priya-sharma",
+  "subject_email_hash": "b9e5c3d2a7f4e1b8c6a2f9d3e5c4b7a1e2d3c4b5a6f7e8d9c0b1a2f3e4d5c6b7",
+  "started_at": "2026-08-08T10:00:00Z",
+  "finished_at": "2026-08-08T10:04:23Z",
+  "writeback_urn": "urn:li:erasureRequest:20260808-100000-priya-sharma",
+  "actions": [
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.raw.patients,PROD)",
+      "asset_name": "raw.patients",
+      "action_type": "anonymize_row",
+      "sql": "UPDATE raw.patients SET email = NULL, phone = NULL, name = NULL WHERE patient_id = 48291;",
+      "command": null,
+      "reason": "Source table with 3 PII column(s). Null out PII, retain row for FK integrity.",
+      "approved": true,
+      "executed": true,
+      "execution_error": null,
+      "is_residual": false
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.marts.patient_360,PROD)",
+      "asset_name": "marts.patient_360",
+      "action_type": "delete_row",
+      "sql": "DELETE FROM marts.patient_360 WHERE patient_id = 48291;",
+      "command": null,
+      "reason": "Derived table containing subject row - delete directly.",
+      "approved": true,
+      "executed": true,
+      "execution_error": null,
+      "is_residual": false
+    },
+    {
+      "urn": "urn:li:dashboard:(tableau,exec_dashboard.patient_health)",
+      "asset_name": "tableau.exec_dashboard",
+      "action_type": "dashboard_invalidate",
+      "sql": null,
+      "command": "# invalidate cache for urn:li:dashboard:(tableau,exec_dashboard.patient_health)",
+      "reason": "BI asset - flag for cache/extract refresh so stale PII doesn't render.",
+      "approved": true,
+      "executed": true,
+      "execution_error": null,
+      "is_residual": false
+    },
+    {
+      "urn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,churn_model_v3,PROD)",
+      "asset_name": "ml.churn_model_v3",
+      "action_type": "ml_model_annotate",
+      "sql": null,
+      "command": "# annotate urn:li:mlModel:(urn:li:dataPlatform:mlflow,churn_model_v3,PROD) training_data_erasure=pending",
+      "reason": "ML asset trained on data containing subject - flag for retrain per policy.",
+      "approved": true,
+      "executed": true,
+      "execution_error": null,
+      "is_residual": false
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.analytics_sandbox.priya_analysis_2024,PROD)",
+      "asset_name": "analytics_sandbox.priya_analysis_2024",
+      "action_type": "residual_review",
+      "sql": null,
+      "command": null,
+      "reason": "No owner and no PII tag, but appears downstream of tagged sources. Static classification would miss this asset; agent flags for manual review.",
+      "approved": false,
+      "executed": false,
+      "execution_error": null,
+      "is_residual": true
+    }
+  ]
+}

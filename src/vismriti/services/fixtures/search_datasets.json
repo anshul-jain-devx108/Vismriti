@@ -1,0 +1,28 @@
+{
+  "columns": [
+    {
+      "dataset_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.raw.patients,PROD)",
+      "column_name": "email",
+      "pii_type": "email",
+      "tags": ["PII.email", "GDPR.subject"]
+    },
+    {
+      "dataset_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.raw.patients,PROD)",
+      "column_name": "phone",
+      "pii_type": "phone",
+      "tags": ["PII.phone"]
+    },
+    {
+      "dataset_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.raw.patients,PROD)",
+      "column_name": "name",
+      "pii_type": "name",
+      "tags": ["PII.name"]
+    },
+    {
+      "dataset_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.raw.support_tickets,PROD)",
+      "column_name": "reporter_email",
+      "pii_type": "email",
+      "tags": ["PII.email"]
+    }
+  ]
+}

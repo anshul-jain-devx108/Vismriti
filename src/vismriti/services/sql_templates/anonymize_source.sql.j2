@@ -1,0 +1,7 @@
+-- Anonymize source row: null PII columns, keep row for FK integrity.
+UPDATE {{ table }}
+SET
+{%- for col in pii_columns %}
+    {{ col }} = NULL{% if not loop.last %},{% endif %}
+{%- endfor %}
+WHERE {{ id_column }} = {{ subject_id }};

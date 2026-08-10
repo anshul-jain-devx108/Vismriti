@@ -1,0 +1,22 @@
+version: "3.9"
+# Minimal companion services for the erasure agent demo.
+# DataHub itself is expected to be running separately via:
+#     datahub docker quickstart
+# This compose brings up just the Postgres warehouse the agent writes to.
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: erasure-agent-pg
+    environment:
+      POSTGRES_DB: healthcare
+      POSTGRES_USER: datahub
+      POSTGRES_PASSWORD: datahub
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./scripts/init_healthcare.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+      - pg-data:/var/lib/postgresql/data
+
+volumes:
+  pg-data:

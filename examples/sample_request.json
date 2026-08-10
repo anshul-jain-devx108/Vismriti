@@ -1,0 +1,8 @@
+{
+  "subject_email": "priya.sharma@example.com",
+  "requested_at": "2026-08-08T10:00:00Z",
+  "regulation": "GDPR Article 17",
+  "requester": "legal@example.com",
+  "sla_days": 30,
+  "notes": "Standard right-to-erasure request; no legal hold in effect."
+}

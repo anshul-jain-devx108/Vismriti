@@ -1,0 +1,80 @@
+{
+  "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.raw.patients,PROD)": {
+    "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.raw.patients,PROD)",
+    "name": "raw.patients",
+    "platform": "postgres",
+    "owners": ["data-eng@example.com"],
+    "pii_columns": [
+      {"column_name": "email", "pii_type": "email", "tags": ["PII.email"]},
+      {"column_name": "phone", "pii_type": "phone", "tags": ["PII.phone"]},
+      {"column_name": "name", "pii_type": "name", "tags": ["PII.name"]}
+    ],
+    "upstreams": []
+  },
+  "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.raw.support_tickets,PROD)": {
+    "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.raw.support_tickets,PROD)",
+    "name": "raw.support_tickets",
+    "platform": "postgres",
+    "owners": ["support-eng@example.com"],
+    "pii_columns": [
+      {"column_name": "reporter_email", "pii_type": "email", "tags": ["PII.email"]}
+    ],
+    "upstreams": []
+  },
+  "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.raw.appointments,PROD)": {
+    "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.raw.appointments,PROD)",
+    "name": "raw.appointments",
+    "platform": "postgres",
+    "owners": ["data-eng@example.com"],
+    "pii_columns": [],
+    "upstreams": ["urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.raw.patients,PROD)"]
+  },
+  "urn:li:dataset:(urn:li:dataPlatform:dbt,healthcare.staging.patients_clean,PROD)": {
+    "urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,healthcare.staging.patients_clean,PROD)",
+    "name": "staging.patients_clean",
+    "platform": "dbt",
+    "owners": ["data-eng@example.com"],
+    "pii_columns": [],
+    "upstreams": ["urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.raw.patients,PROD)"]
+  },
+  "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.marts.patient_360,PROD)": {
+    "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.marts.patient_360,PROD)",
+    "name": "marts.patient_360",
+    "platform": "postgres",
+    "owners": ["analytics@example.com"],
+    "pii_columns": [],
+    "upstreams": ["urn:li:dataset:(urn:li:dataPlatform:dbt,healthcare.staging.patients_clean,PROD)"]
+  },
+  "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.marts.churn_features,PROD)": {
+    "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.marts.churn_features,PROD)",
+    "name": "marts.churn_features",
+    "platform": "postgres",
+    "owners": ["ml-platform@example.com"],
+    "pii_columns": [],
+    "upstreams": ["urn:li:dataset:(urn:li:dataPlatform:dbt,healthcare.staging.patients_clean,PROD)"]
+  },
+  "urn:li:dashboard:(tableau,exec_dashboard.patient_health)": {
+    "urn": "urn:li:dashboard:(tableau,exec_dashboard.patient_health)",
+    "name": "tableau.exec_dashboard",
+    "platform": "tableau",
+    "owners": ["exec-analytics@example.com"],
+    "pii_columns": [],
+    "upstreams": ["urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.marts.patient_360,PROD)"]
+  },
+  "urn:li:mlModel:(urn:li:dataPlatform:mlflow,churn_model_v3,PROD)": {
+    "urn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,churn_model_v3,PROD)",
+    "name": "ml.churn_model_v3",
+    "platform": "mlflow",
+    "owners": ["ml-platform@example.com"],
+    "pii_columns": [],
+    "upstreams": ["urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.marts.churn_features,PROD)"]
+  },
+  "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.analytics_sandbox.priya_analysis_2024,PROD)": {
+    "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.analytics_sandbox.priya_analysis_2024,PROD)",
+    "name": "analytics_sandbox.priya_analysis_2024",
+    "platform": "postgres",
+    "owners": [],
+    "pii_columns": [],
+    "upstreams": ["urn:li:dataset:(urn:li:dataPlatform:postgres,healthcare.marts.patient_360,PROD)"]
+  }
+}
