@@ -166,7 +166,6 @@ no agent-framework import:
 Destructive tools are gated on explicit confirmation at the framework level, so
 the run halts and waits rather than relying on the model to behave.
 
-Full walkthrough: [`docs/architecture.md`](docs/architecture.md).
 
 ---
 
@@ -201,8 +200,6 @@ The same deterministic core is reachable four ways:
 | HTTP API + MCP server | `python run.py` | Yes |
 | Slack bot | `python run.py` with `SLACK_ENABLED=true` | Yes |
 
-Setup for each, including the Slack app manifest and scopes, is in
-[`SETUP.md`](SETUP.md) and [`docs/slack_setup.md`](docs/slack_setup.md).
 
 ---
 
@@ -255,7 +252,6 @@ A compliance tool that fakes a successful deletion record is worse than no
 tool, so the failure is surfaced rather than smoothed over. Against a DataHub
 with Kafka and populated indexes, the same code path writes the annotations and
 the `erasureRequest` entity. Details and a deployment recipe:
-[`docs/azure_deploy.md`](docs/azure_deploy.md).
 
 ---
 
